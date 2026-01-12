@@ -65,16 +65,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "✅ MCP Python package installed" -ForegroundColor Green
 
-# Create MCP configuration
-$mcpConfig = @{
-    servers = @{
-        "twincat-automation" = @{
-            type = "stdio"
-            command = "python"
-            args = @($serverPath)
-        }
-    }
-} | ConvertTo-Json -Depth 4
+# Build MCP server JSON configuration (escape quotes for cmd.exe)
+$mcpServerJson = '{\"name\":\"twincat-automation\",\"type\":\"stdio\",\"command\":\"python\",\"args\":[\"' + $serverPath + '\"]}'
 
 if ($Workspace) {
     # Install to workspace .vscode folder
@@ -85,71 +77,55 @@ if ($Workspace) {
         New-Item -ItemType Directory -Path $vscodeDir -Force | Out-Null
     }
     
-    Set-Content -Path $mcpJsonPath -Value $mcpConfig
+    # For workspace, we still need to create the file manually
+    $mcpConfig = @"
+{
+	"servers": {
+		"twincat-automation": {
+			"type": "stdio",
+			"command": "python",
+			"args": ["$serverPath"]
+		}
+	}
+}
+"@
+    Set-Content -Path $mcpJsonPath -Value $mcpConfig -Encoding UTF8
     Write-Host ""
     Write-Host "✅ Installed to workspace: $mcpJsonPath" -ForegroundColor Green
 } else {
-    # Install globally to user settings
+    # Install globally using VS Code CLI --add-mcp command
     
     # Detect VS Code variant
-    $vsCodeInsiders = Test-Path "$env:APPDATA\Code - Insiders"
-    $vsCodeStable = Test-Path "$env:APPDATA\Code"
+    $vsCodeInsiders = Get-Command "code-insiders" -ErrorAction SilentlyContinue
+    $vsCodeStable = Get-Command "code" -ErrorAction SilentlyContinue
     
-    $targets = @()
-    
-    if ($Insiders -or (-not $vsCodeStable -and $vsCodeInsiders)) {
-        $targets += @{
-            Name = "VS Code Insiders"
-            Path = "$env:APPDATA\Code - Insiders\User\globalStorage\github.copilot-chat\mcp.json"
-        }
-    }
+    $installed = $false
     
     if (-not $Insiders -and $vsCodeStable) {
-        $targets += @{
-            Name = "VS Code"
-            Path = "$env:APPDATA\Code\User\globalStorage\github.copilot-chat\mcp.json"
+        Write-Host "Installing to VS Code..." -ForegroundColor Gray
+        $result = cmd /c "code --add-mcp `"$mcpServerJson`"" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✅ Installed to VS Code" -ForegroundColor Green
+            $installed = $true
+        } else {
+            Write-Host "⚠️ Failed to install to VS Code: $result" -ForegroundColor Yellow
         }
     }
     
-    if ($vsCodeInsiders -and $vsCodeStable -and -not $Insiders) {
-        # Install to both if both are present
-        $targets += @{
-            Name = "VS Code Insiders"
-            Path = "$env:APPDATA\Code - Insiders\User\globalStorage\github.copilot-chat\mcp.json"
+    if ($Insiders -or $vsCodeInsiders) {
+        Write-Host "Installing to VS Code Insiders..." -ForegroundColor Gray
+        $result = cmd /c "code-insiders --add-mcp `"$mcpServerJson`"" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✅ Installed to VS Code Insiders" -ForegroundColor Green
+            $installed = $true
+        } else {
+            Write-Host "⚠️ Failed to install to VS Code Insiders: $result" -ForegroundColor Yellow
         }
     }
     
-    if ($targets.Count -eq 0) {
+    if (-not $installed) {
         Write-Host "❌ VS Code not found. Install VS Code first." -ForegroundColor Red
         exit 1
-    }
-    
-    foreach ($target in $targets) {
-        $dir = Split-Path $target.Path -Parent
-        if (-not (Test-Path $dir)) {
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        }
-        
-        # Check if file exists and has other servers
-        if (Test-Path $target.Path) {
-            try {
-                $existing = Get-Content $target.Path -Raw | ConvertFrom-Json
-                if ($existing.servers) {
-                    # Merge with existing config
-                    $existing.servers | Add-Member -NotePropertyName "twincat-automation" -NotePropertyValue (@{
-                        type = "stdio"
-                        command = "python"
-                        args = @($serverPath)
-                    }) -Force
-                    $mcpConfig = $existing | ConvertTo-Json -Depth 4
-                }
-            } catch {
-                # File exists but invalid JSON, overwrite
-            }
-        }
-        
-        Set-Content -Path $target.Path -Value $mcpConfig
-        Write-Host "✅ Installed to $($target.Name): $($target.Path)" -ForegroundColor Green
     }
 }
 

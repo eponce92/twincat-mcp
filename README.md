@@ -75,7 +75,7 @@ An **MCP (Model Context Protocol) server** that enables AI assistants like GitHu
 ### Quick Setup (Recommended)
 
 ```powershell
-git clone https://github.com/YOUR_USERNAME/twincat-mcp.git
+git clone https://github.com/eponce92/twincat-mcp.git
 cd twincat-mcp
 .\setup.bat
 ```
@@ -84,7 +84,22 @@ This will:
 1. ✅ Check all prerequisites
 2. ✅ Build TcAutomation.exe with MSBuild
 3. ✅ Install Python dependencies
-4. ✅ Register MCP server in VS Code globally
+4. ✅ Register MCP server in VS Code globally (using `--add-mcp` CLI)
+
+### Manual Installation
+
+If you prefer to install manually or the setup script doesn't work:
+
+```powershell
+# Build the project
+.\scripts\build.ps1
+
+# Install Python dependencies
+pip install -r mcp-server/requirements.txt
+
+# Register with VS Code (or VS Code Insiders)
+code --add-mcp '{"name":"twincat-automation","type":"stdio","command":"python","args":["C:/path/to/twincat-mcp/mcp-server/server.py"]}'
+```
 
 ### Start the Server
 
@@ -266,9 +281,3 @@ twincat-mcp/
 MIT License - See [LICENSE](LICENSE) for details.
 
 ---
-
-## Acknowledgments
-
-- [Beckhoff Automation](https://www.beckhoff.com/) for TwinCAT
-- [Model Context Protocol](https://modelcontextprotocol.io/) specification
-- Inspired by [TcUnit-Runner](https://github.com/tcunit/TcUnit-Runner)
