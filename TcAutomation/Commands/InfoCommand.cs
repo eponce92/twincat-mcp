@@ -54,7 +54,7 @@ namespace TcAutomation.Commands
 
                 // Get PLC projects
                 var plcProjects = automation.GetPlcProjects();
-                result.PlcProjects = plcProjects.Select(p => new PlcInfo
+                result.PlcProjects = plcProjects.Select(p => new Models.PlcInfo
                 {
                     Name = p.Name,
                     AmsPort = p.AmsPort

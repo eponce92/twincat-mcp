@@ -102,6 +102,10 @@
     <Compile Include="Commands\ActivateCommand.cs" />
     <Compile Include="Commands\RestartCommand.cs" />
     <Compile Include="Commands\DeployCommand.cs" />
+    <Compile Include="Commands\ListPlcsCommand.cs" />
+    <Compile Include="Commands\SetBootProjectCommand.cs" />
+    <Compile Include="Commands\DisableIoCommand.cs" />
+    <Compile Include="Commands\SetVariantCommand.cs" />
     <Compile Include="Models\BuildResult.cs" />
     <Compile Include="Models\ProjectInfo.cs" />
   </ItemGroup>

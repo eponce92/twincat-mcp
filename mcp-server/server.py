@@ -12,6 +12,10 @@ Tools:
 - twincat_activate: Activate configuration on target PLC
 - twincat_restart: Restart TwinCAT runtime on target
 - twincat_deploy: Full deployment workflow
+- twincat_list_plcs: List all PLC projects in a solution
+- twincat_set_boot_project: Configure boot project settings
+- twincat_disable_io: Disable/enable I/O devices
+- twincat_set_variant: Get or set TwinCAT project variant
 """
 
 import json
@@ -256,6 +260,101 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["solutionPath", "amsNetId"]
             }
+        ),
+        Tool(
+            name="twincat_list_plcs",
+            description="List all PLC projects in a TwinCAT solution with details (name, AMS port, boot project autostart status).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            }
+        ),
+        Tool(
+            name="twincat_set_boot_project",
+            description="Configure boot project settings for PLC projects (enable autostart, generate boot project on target).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "plcName": {
+                        "type": "string",
+                        "description": "Target only this PLC project. Optional - targets all PLCs if not specified."
+                    },
+                    "autostart": {
+                        "type": "boolean",
+                        "description": "Enable boot project autostart (default: true)",
+                        "default": True
+                    },
+                    "generate": {
+                        "type": "boolean",
+                        "description": "Generate boot project on target (default: true)",
+                        "default": True
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            }
+        ),
+        Tool(
+            name="twincat_disable_io",
+            description="Disable or enable all top-level I/O devices. Useful for running tests on a different machine than the target PLC where physical hardware is not present.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "enable": {
+                        "type": "boolean",
+                        "description": "If true, enable I/O devices instead of disabling (default: false = disable)",
+                        "default": False
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            }
+        ),
+        Tool(
+            name="twincat_set_variant",
+            description="Get or set the TwinCAT project variant. Requires TwinCAT XAE 4024 or later.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "variantName": {
+                        "type": "string",
+                        "description": "Name of the variant to set (e.g., 'PrimaryPLC'). Omit to just get current variant."
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            }
         )
     ]
 
@@ -439,6 +538,129 @@ PLC Projects:
                 output += "\n🔴 Build Errors:\n"
                 for e in result["errors"]:
                     output += f"  - {e.get('file', '')}:{e.get('line', '')}: {e.get('description', '')}\n"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_list_plcs":
+        solution_path = arguments.get("solutionPath", "")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("list-plcs", args)
+        
+        if result.get("errorMessage"):
+            output = f"❌ Error: {result['errorMessage']}"
+        else:
+            output = f"""📋 PLC Projects in Solution
+Solution: {result.get('solutionPath', 'Unknown')}
+TwinCAT Version: {result.get('tcVersion', 'Unknown')}
+PLC Count: {result.get('plcCount', 0)}
+
+"""
+            plcs = result.get("plcProjects", [])
+            if plcs:
+                for plc in plcs:
+                    autostart = "✅" if plc.get("bootProjectAutostart") else "❌"
+                    output += f"  {plc.get('index', '?')}. {plc.get('name', 'Unknown')}\n"
+                    output += f"     AMS Port: {plc.get('amsPort', 'Unknown')}\n"
+                    output += f"     Boot Autostart: {autostart}\n"
+                    if plc.get("error"):
+                        output += f"     ⚠️ {plc['error']}\n"
+                    output += "\n"
+            else:
+                output += "  (no PLC projects found)\n"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_set_boot_project":
+        solution_path = arguments.get("solutionPath", "")
+        plc_name = arguments.get("plcName")
+        autostart = arguments.get("autostart", True)
+        generate = arguments.get("generate", True)
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if plc_name:
+            args.extend(["--plc", plc_name])
+        if autostart:
+            args.append("--autostart")
+        if generate:
+            args.append("--generate")
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("set-boot-project", args)
+        
+        if result.get("success"):
+            output = f"✅ Boot project configuration updated\n\n"
+            for plc in result.get("plcResults", []):
+                status = "✅" if plc.get("success") else "❌"
+                output += f"{status} {plc.get('name', 'Unknown')}\n"
+                output += f"   Autostart: {'enabled' if plc.get('autostartEnabled') else 'disabled'}\n"
+                output += f"   Boot Generated: {'yes' if plc.get('bootProjectGenerated') else 'no'}\n"
+                if plc.get("error"):
+                    output += f"   ⚠️ {plc['error']}\n"
+        else:
+            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_disable_io":
+        solution_path = arguments.get("solutionPath", "")
+        enable = arguments.get("enable", False)
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if enable:
+            args.append("--enable")
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("disable-io", args)
+        
+        if result.get("success"):
+            action = "enabled" if enable else "disabled"
+            output = f"✅ {result.get('message', f'I/O devices {action}')}\n\n"
+            output += f"Total devices: {result.get('totalDevices', 0)}\n"
+            output += f"Modified: {result.get('modifiedCount', 0)}\n\n"
+            
+            devices = result.get("devices", [])
+            if devices:
+                output += "📋 Device Status:\n"
+                for dev in devices:
+                    modified = "🔄" if dev.get("modified") else "—"
+                    output += f"  {modified} {dev.get('name', 'Unknown')}: {dev.get('currentState', 'Unknown')}\n"
+                    if dev.get("error"):
+                        output += f"     ⚠️ {dev['error']}\n"
+        else:
+            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_set_variant":
+        solution_path = arguments.get("solutionPath", "")
+        variant_name = arguments.get("variantName")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if variant_name:
+            args.extend(["--variant", variant_name])
+        else:
+            args.append("--get")
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("set-variant", args)
+        
+        if result.get("success"):
+            output = f"✅ {result.get('message', 'Variant operation successful')}\n\n"
+            output += f"Previous variant: {result.get('previousVariant') or '(default)'}\n"
+            output += f"Current variant: {result.get('currentVariant') or '(default)'}"
+        else:
+            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     

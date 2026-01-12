@@ -181,6 +181,82 @@ namespace TcAutomation
                 DeployCommand.Execute(solution, amsNetId, plc, tcVersion, skipBuild, dryRun);
             }, deploySolutionOpt, deployAmsOpt, deployTcVersionOpt, plcOption, skipBuildOption, dryRunOption);
 
+            // === LIST-PLCS COMMAND ===
+            var listPlcsCommand = new Command("list-plcs", "List all PLC projects in a TwinCAT solution");
+            var listPlcsSolutionOpt = CreateSolutionOption();
+            var listPlcsTcVersionOpt = CreateTcVersionOption();
+            listPlcsCommand.AddOption(listPlcsSolutionOpt);
+            listPlcsCommand.AddOption(listPlcsTcVersionOpt);
+            
+            listPlcsCommand.SetHandler((string solution, string? tcVersion) =>
+            {
+                ListPlcsCommand.Execute(solution, tcVersion);
+            }, listPlcsSolutionOpt, listPlcsTcVersionOpt);
+
+            // === SET-BOOT-PROJECT COMMAND ===
+            var setBootProjectCommand = new Command("set-boot-project", "Configure boot project settings for PLC projects");
+            var setBootSolutionOpt = CreateSolutionOption();
+            var setBootTcVersionOpt = CreateTcVersionOption();
+            var setBootPlcOpt = new Option<string?>(
+                aliases: new[] { "--plc", "-p" },
+                description: "Target only this PLC project (by name)");
+            var setBootAutostartOpt = new Option<bool>(
+                aliases: new[] { "--autostart" },
+                description: "Enable boot project autostart",
+                getDefaultValue: () => true);
+            var setBootGenerateOpt = new Option<bool>(
+                aliases: new[] { "--generate" },
+                description: "Generate boot project on target",
+                getDefaultValue: () => true);
+            setBootProjectCommand.AddOption(setBootSolutionOpt);
+            setBootProjectCommand.AddOption(setBootTcVersionOpt);
+            setBootProjectCommand.AddOption(setBootPlcOpt);
+            setBootProjectCommand.AddOption(setBootAutostartOpt);
+            setBootProjectCommand.AddOption(setBootGenerateOpt);
+            
+            setBootProjectCommand.SetHandler((string solution, string? tcVersion, string? plc, bool autostart, bool generate) =>
+            {
+                SetBootProjectCommand.Execute(solution, tcVersion, plc, autostart, generate);
+            }, setBootSolutionOpt, setBootTcVersionOpt, setBootPlcOpt, setBootAutostartOpt, setBootGenerateOpt);
+
+            // === DISABLE-IO COMMAND ===
+            var disableIoCommand = new Command("disable-io", "Disable or enable I/O devices (useful for running without physical hardware)");
+            var disableIoSolutionOpt = CreateSolutionOption();
+            var disableIoTcVersionOpt = CreateTcVersionOption();
+            var disableIoEnableOpt = new Option<bool>(
+                aliases: new[] { "--enable" },
+                description: "Enable I/O devices instead of disabling",
+                getDefaultValue: () => false);
+            disableIoCommand.AddOption(disableIoSolutionOpt);
+            disableIoCommand.AddOption(disableIoTcVersionOpt);
+            disableIoCommand.AddOption(disableIoEnableOpt);
+            
+            disableIoCommand.SetHandler((string solution, string? tcVersion, bool enable) =>
+            {
+                DisableIoCommand.Execute(solution, tcVersion, enable);
+            }, disableIoSolutionOpt, disableIoTcVersionOpt, disableIoEnableOpt);
+
+            // === SET-VARIANT COMMAND ===
+            var setVariantCommand = new Command("set-variant", "Get or set the TwinCAT project variant (requires TwinCAT 4024+)");
+            var setVariantSolutionOpt = CreateSolutionOption();
+            var setVariantTcVersionOpt = CreateTcVersionOption();
+            var setVariantNameOpt = new Option<string?>(
+                aliases: new[] { "--variant", "-n" },
+                description: "Name of the variant to set (omit to just get current variant)");
+            var setVariantGetOnlyOpt = new Option<bool>(
+                aliases: new[] { "--get" },
+                description: "Only get current variant, don't set",
+                getDefaultValue: () => false);
+            setVariantCommand.AddOption(setVariantSolutionOpt);
+            setVariantCommand.AddOption(setVariantTcVersionOpt);
+            setVariantCommand.AddOption(setVariantNameOpt);
+            setVariantCommand.AddOption(setVariantGetOnlyOpt);
+            
+            setVariantCommand.SetHandler((string solution, string? tcVersion, string? variant, bool getOnly) =>
+            {
+                SetVariantCommand.Execute(solution, tcVersion, variant, getOnly);
+            }, setVariantSolutionOpt, setVariantTcVersionOpt, setVariantNameOpt, setVariantGetOnlyOpt);
+
             // === ADD COMMANDS TO ROOT ===
             rootCommand.AddCommand(buildCommand);
             rootCommand.AddCommand(infoCommand);
@@ -189,6 +265,10 @@ namespace TcAutomation
             rootCommand.AddCommand(activateCommand);
             rootCommand.AddCommand(restartCommand);
             rootCommand.AddCommand(deployCommand);
+            rootCommand.AddCommand(listPlcsCommand);
+            rootCommand.AddCommand(setBootProjectCommand);
+            rootCommand.AddCommand(disableIoCommand);
+            rootCommand.AddCommand(setVariantCommand);
 
             return await rootCommand.InvokeAsync(args);
         }
