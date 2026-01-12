@@ -702,24 +702,24 @@ PLC Projects:
         
         result = run_tc_automation("list-plcs", args)
         
-        if result.get("errorMessage"):
-            output = f"❌ Error: {result['errorMessage']}"
+        if result.get("ErrorMessage"):
+            output = f"❌ Error: {result['ErrorMessage']}"
         else:
             output = f"""📋 PLC Projects in Solution
-Solution: {result.get('solutionPath', 'Unknown')}
-TwinCAT Version: {result.get('tcVersion', 'Unknown')}
-PLC Count: {result.get('plcCount', 0)}
+Solution: {result.get('SolutionPath', 'Unknown')}
+TwinCAT Version: {result.get('TcVersion', 'Unknown')}
+PLC Count: {result.get('PlcCount', 0)}
 
 """
-            plcs = result.get("plcProjects", [])
+            plcs = result.get("PlcProjects", [])
             if plcs:
                 for plc in plcs:
-                    autostart = "✅" if plc.get("bootProjectAutostart") else "❌"
-                    output += f"  {plc.get('index', '?')}. {plc.get('name', 'Unknown')}\n"
-                    output += f"     AMS Port: {plc.get('amsPort', 'Unknown')}\n"
+                    autostart = "✅" if plc.get("BootProjectAutostart") else "❌"
+                    output += f"  {plc.get('Index', '?')}. {plc.get('Name', 'Unknown')}\n"
+                    output += f"     AMS Port: {plc.get('AmsPort', 'Unknown')}\n"
                     output += f"     Boot Autostart: {autostart}\n"
-                    if plc.get("error"):
-                        output += f"     ⚠️ {plc['error']}\n"
+                    if plc.get("Error"):
+                        output += f"     ⚠️ {plc['Error']}\n"
                     output += "\n"
             else:
                 output += "  (no PLC projects found)\n"
@@ -745,17 +745,17 @@ PLC Count: {result.get('plcCount', 0)}
         
         result = run_tc_automation("set-boot-project", args)
         
-        if result.get("success"):
+        if result.get("Success"):
             output = f"✅ Boot project configuration updated\n\n"
-            for plc in result.get("plcResults", []):
-                status = "✅" if plc.get("success") else "❌"
-                output += f"{status} {plc.get('name', 'Unknown')}\n"
-                output += f"   Autostart: {'enabled' if plc.get('autostartEnabled') else 'disabled'}\n"
-                output += f"   Boot Generated: {'yes' if plc.get('bootProjectGenerated') else 'no'}\n"
-                if plc.get("error"):
-                    output += f"   ⚠️ {plc['error']}\n"
+            for plc in result.get("PlcResults", []):
+                status = "✅" if plc.get("Success") else "❌"
+                output += f"{status} {plc.get('Name', 'Unknown')}\n"
+                output += f"   Autostart: {'enabled' if plc.get('AutostartEnabled') else 'disabled'}\n"
+                output += f"   Boot Generated: {'yes' if plc.get('BootProjectGenerated') else 'no'}\n"
+                if plc.get("Error"):
+                    output += f"   ⚠️ {plc['Error']}\n"
         else:
-            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+            output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
@@ -772,22 +772,22 @@ PLC Count: {result.get('plcCount', 0)}
         
         result = run_tc_automation("disable-io", args)
         
-        if result.get("success"):
+        if result.get("Success"):
             action = "enabled" if enable else "disabled"
-            output = f"✅ {result.get('message', f'I/O devices {action}')}\n\n"
-            output += f"Total devices: {result.get('totalDevices', 0)}\n"
-            output += f"Modified: {result.get('modifiedCount', 0)}\n\n"
+            output = f"✅ {result.get('Message', f'I/O devices {action}')}\n\n"
+            output += f"Total devices: {result.get('TotalDevices', 0)}\n"
+            output += f"Modified: {result.get('ModifiedCount', 0)}\n\n"
             
-            devices = result.get("devices", [])
+            devices = result.get("Devices", [])
             if devices:
                 output += "📋 Device Status:\n"
                 for dev in devices:
-                    modified = "🔄" if dev.get("modified") else "—"
-                    output += f"  {modified} {dev.get('name', 'Unknown')}: {dev.get('currentState', 'Unknown')}\n"
-                    if dev.get("error"):
-                        output += f"     ⚠️ {dev['error']}\n"
+                    modified = "🔄" if dev.get("Modified") else "—"
+                    output += f"  {modified} {dev.get('Name', 'Unknown')}: {dev.get('CurrentState', 'Unknown')}\n"
+                    if dev.get("Error"):
+                        output += f"     ⚠️ {dev['Error']}\n"
         else:
-            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+            output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
@@ -806,12 +806,12 @@ PLC Count: {result.get('plcCount', 0)}
         
         result = run_tc_automation("set-variant", args)
         
-        if result.get("success"):
-            output = f"✅ {result.get('message', 'Variant operation successful')}\n\n"
-            output += f"Previous variant: {result.get('previousVariant') or '(default)'}\n"
-            output += f"Current variant: {result.get('currentVariant') or '(default)'}"
+        if result.get("Success"):
+            output = f"✅ {result.get('Message', 'Variant operation successful')}\n\n"
+            output += f"Previous variant: {result.get('PreviousVariant') or '(default)'}\n"
+            output += f"Current variant: {result.get('CurrentVariant') or '(default)'}"
         else:
-            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+            output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
