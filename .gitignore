@@ -1,0 +1,32 @@
+# Build outputs
+TcAutomation/bin/
+TcAutomation/obj/
+TcAutomation/publish/
+
+# Python
+mcp-server/__pycache__/
+mcp-server/*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test projects (if any local test TC projects)
+tests/TestTwinCATProject/
+
+# npm (for MCP Inspector)
+node_modules/

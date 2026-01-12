@@ -1,0 +1,41 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "TcAutomation - Build",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-tcautomation",
+      "program": "${workspaceFolder}/TcAutomation/bin/Debug/net8.0-windows/TcAutomation.exe",
+      "args": ["build", "--solution", "${input:solutionPath}"],
+      "cwd": "${workspaceFolder}/TcAutomation",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "TcAutomation - Info",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-tcautomation",
+      "program": "${workspaceFolder}/TcAutomation/bin/Debug/net8.0-windows/TcAutomation.exe",
+      "args": ["info", "--solution", "${input:solutionPath}"],
+      "cwd": "${workspaceFolder}/TcAutomation",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "Python: MCP Server (Debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/mcp-server/server.py",
+      "console": "integratedTerminal"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "solutionPath",
+      "type": "promptString",
+      "description": "Path to TwinCAT solution file (.sln)"
+    }
+  ]
+}

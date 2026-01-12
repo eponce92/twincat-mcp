@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "ms-dotnettools.csharp",
+    "ms-python.python",
+    "github.copilot",
+    "github.copilot-chat"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "twincat-automation": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${workspaceFolder}/mcp-server/server.py"],
+      "env": {}
+    }
+  }
+}
