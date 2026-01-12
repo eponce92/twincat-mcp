@@ -57,6 +57,58 @@ An **MCP (Model Context Protocol) server** that enables AI assistants like GitHu
 
 ---
 
+## Safety Features
+
+This MCP server includes multiple safety mechanisms to prevent accidental damage to production PLCs.
+
+### 🔒 SAFE/ARMED Mode
+
+Dangerous operations require explicitly **arming** the server first:
+
+```
+"Arm dangerous operations for deploying hotfix to line 3"
+```
+
+- Server starts in **SAFE mode** - destructive tools are blocked
+- Call `twincat_arm_dangerous_operations` to enable dangerous tools
+- Armed mode **auto-expires after 5 minutes** (configurable)
+- Call with `disarm: true` to manually return to safe mode
+
+**Dangerous tools (require armed mode):**
+- `twincat_activate` - Downloads config to PLC
+- `twincat_restart` - Restarts TwinCAT runtime  
+- `twincat_deploy` - Full deployment workflow
+- `twincat_set_state` - Changes PLC state (Run/Stop/Config)
+- `twincat_write_var` - Writes to PLC variables
+
+### ✅ Confirmation Required
+
+The most destructive operations require an additional `confirm: "CONFIRM"` parameter:
+
+- `twincat_activate`
+- `twincat_restart`
+- `twincat_deploy`
+
+This provides a two-step safety check: arm first, then confirm.
+
+### 🏷️ Tool Annotations
+
+All tools include MCP protocol annotations to help AI assistants understand risk levels:
+
+| Annotation | Meaning |
+|------------|---------|
+| `readOnlyHint: true` | Tool only reads data, no modifications |
+| `destructiveHint: true` | Tool can cause significant changes |
+| `idempotentHint: true` | Safe to retry, same result each time |
+
+### ⚙️ Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `TWINCAT_ARMED_TTL` | `300` | Armed mode timeout in seconds (5 min) |
+
+---
+
 ## Prerequisites
 
 | Software | Version | Notes |
@@ -164,6 +216,11 @@ Once installed, the TwinCAT tools work in **any VS Code workspace**.
 
 ## Available Tools
 
+### Safety Control
+| Tool | Description |
+|------|-------------|
+| `twincat_arm_dangerous_operations` | Arm/disarm dangerous operations (required before deploy, activate, restart, etc.) |
+
 ### Build & Project Management
 | Tool | Description |
 |------|-------------|
@@ -171,7 +228,7 @@ Once installed, the TwinCAT tools work in **any VS Code workspace**.
 | `twincat_get_info` | Get TwinCAT version, VS version, PLC list |
 | `twincat_clean` | Clean solution (remove build artifacts) |
 
-### Deployment
+### Deployment (⚠️ Require Armed Mode + Confirmation)
 | Tool | Description |
 |------|-------------|
 | `twincat_set_target` | Set target AMS Net ID |
@@ -183,9 +240,9 @@ Once installed, the TwinCAT tools work in **any VS Code workspace**.
 | Tool | Description |
 |------|-------------|
 | `twincat_get_state` | Get runtime state via ADS (Run/Config/Stop) |
-| `twincat_set_state` | Set runtime state via ADS |
+| `twincat_set_state` | Set runtime state via ADS (⚠️ requires armed mode) |
 | `twincat_read_var` | Read PLC variable by symbol path |
-| `twincat_write_var` | Write value to PLC variable |
+| `twincat_write_var` | Write value to PLC variable (⚠️ requires armed mode) |
 
 ### Configuration
 | Tool | Description |

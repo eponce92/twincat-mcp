@@ -28,10 +28,129 @@ Tools:
 import json
 import subprocess
 import os
+import time
 from pathlib import Path
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+
+# =============================================================================
+# SAFETY CONFIGURATION
+# =============================================================================
+
+# Armed mode TTL in seconds (default: 5 minutes)
+ARMED_MODE_TTL = int(os.environ.get("TWINCAT_ARMED_TTL", 300))
+
+# List of dangerous tools that require armed mode
+DANGEROUS_TOOLS = [
+    "twincat_activate",
+    "twincat_restart", 
+    "twincat_deploy",
+    "twincat_set_state",
+    "twincat_write_var"
+]
+
+# Tools that require explicit confirmation (most destructive)
+CONFIRMATION_REQUIRED_TOOLS = [
+    "twincat_activate",
+    "twincat_restart",
+    "twincat_deploy"
+]
+
+# Confirmation token format
+CONFIRM_TOKEN = "CONFIRM"
+
+# Global armed state
+_armed_state = {
+    "armed": False,
+    "armed_at": None,
+    "reason": None
+}
+
+
+def is_armed() -> bool:
+    """Check if dangerous operations are currently armed (not expired)."""
+    if not _armed_state["armed"]:
+        return False
+    
+    if _armed_state["armed_at"] is None:
+        return False
+    
+    elapsed = time.time() - _armed_state["armed_at"]
+    if elapsed > ARMED_MODE_TTL:
+        # Auto-disarm after TTL
+        _armed_state["armed"] = False
+        _armed_state["armed_at"] = None
+        _armed_state["reason"] = None
+        return False
+    
+    return True
+
+
+def get_armed_time_remaining() -> int:
+    """Get seconds remaining in armed mode, or 0 if not armed."""
+    if not is_armed():
+        return 0
+    
+    elapsed = time.time() - _armed_state["armed_at"]
+    return max(0, int(ARMED_MODE_TTL - elapsed))
+
+
+def arm_dangerous_operations(reason: str) -> dict:
+    """Arm dangerous operations with a reason."""
+    _armed_state["armed"] = True
+    _armed_state["armed_at"] = time.time()
+    _armed_state["reason"] = reason
+    return {
+        "armed": True,
+        "ttl_seconds": ARMED_MODE_TTL,
+        "reason": reason
+    }
+
+
+def disarm_dangerous_operations() -> dict:
+    """Disarm dangerous operations."""
+    _armed_state["armed"] = False
+    _armed_state["armed_at"] = None
+    _armed_state["reason"] = None
+    return {"armed": False}
+
+
+def check_armed_for_tool(tool_name: str) -> tuple[bool, str]:
+    """Check if a tool can be executed. Returns (allowed, message)."""
+    if tool_name not in DANGEROUS_TOOLS:
+        return True, ""
+    
+    if not is_armed():
+        remaining = get_armed_time_remaining()
+        return False, (
+            f"🔒 SAFETY: '{tool_name}' is a dangerous operation that requires armed mode.\n\n"
+            f"The server is currently in SAFE mode. To execute this operation:\n"
+            f"1. Call 'twincat_arm_dangerous_operations' with a reason\n"
+            f"2. Then retry this operation within {ARMED_MODE_TTL} seconds\n\n"
+            f"This safety mechanism prevents accidental PLC modifications."
+        )
+    
+    return True, f"⚠️ Armed mode active (reason: {_armed_state['reason']})"
+
+
+def check_confirmation(tool_name: str, arguments: dict) -> tuple[bool, str]:
+    """Check if confirmation is provided for tools that require it. Returns (confirmed, message)."""
+    if tool_name not in CONFIRMATION_REQUIRED_TOOLS:
+        return True, ""
+    
+    confirm = arguments.get("confirm", "")
+    if confirm != CONFIRM_TOKEN:
+        target = arguments.get("amsNetId", "unknown target")
+        return False, (
+            f"⚠️ CONFIRMATION REQUIRED for '{tool_name}'\n\n"
+            f"This operation will affect: {target}\n\n"
+            f"To proceed, add the parameter:\n"
+            f"  confirm: \"{CONFIRM_TOKEN}\"\n\n"
+            f"This ensures intentional execution of destructive operations."
+        )
+    
+    return True, ""
 
 # Initialize MCP server
 server = Server("twincat-mcp")
@@ -111,6 +230,31 @@ def run_tc_automation(command: str, args: list[str]) -> dict:
 async def list_tools() -> list[Tool]:
     """List available TwinCAT tools."""
     return [
+        # Safety control tool
+        Tool(
+            name="twincat_arm_dangerous_operations",
+            description="Arm dangerous operations for a limited time. Required before using destructive tools like deploy, activate, restart, set_state, or write_var. Armed mode expires automatically after 5 minutes (configurable via TWINCAT_ARMED_TTL env var).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Reason for arming dangerous operations (e.g., 'Deploying hotfix for conveyor issue')"
+                    },
+                    "disarm": {
+                        "type": "boolean",
+                        "description": "If true, disarm instead of arm (default: false)",
+                        "default": False
+                    }
+                },
+                "required": ["reason"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
         Tool(
             name="twincat_build",
             description="Build a TwinCAT solution and return any compile errors or warnings. Use this to validate TwinCAT/PLC code changes.",
@@ -132,6 +276,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -146,6 +295,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -164,6 +318,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -186,11 +345,16 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath", "amsNetId"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
             name="twincat_activate",
-            description="Activate TwinCAT configuration on the target PLC. This downloads the configuration to the target.",
+            description="Activate TwinCAT configuration on the target PLC. This downloads the configuration to the target. REQUIRES: Armed mode + confirm='CONFIRM' parameter.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -205,14 +369,23 @@ async def list_tools() -> list[Tool]:
                     "tcVersion": {
                         "type": "string",
                         "description": "Force specific TwinCAT version. Optional."
+                    },
+                    "confirm": {
+                        "type": "string",
+                        "description": "Safety confirmation. Must be 'CONFIRM' to execute."
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": False
             }
         ),
         Tool(
             name="twincat_restart",
-            description="Restart TwinCAT runtime on the target PLC.",
+            description="Restart TwinCAT runtime on the target PLC. REQUIRES: Armed mode + confirm='CONFIRM' parameter.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -227,14 +400,23 @@ async def list_tools() -> list[Tool]:
                     "tcVersion": {
                         "type": "string",
                         "description": "Force specific TwinCAT version. Optional."
+                    },
+                    "confirm": {
+                        "type": "string",
+                        "description": "Safety confirmation. Must be 'CONFIRM' to execute."
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": False
             }
         ),
         Tool(
             name="twincat_deploy",
-            description="Full deployment workflow: build solution, activate boot project, activate configuration, and restart TwinCAT on target PLC.",
+            description="Full deployment workflow: build solution, activate boot project, activate configuration, and restart TwinCAT on target PLC. REQUIRES: Armed mode + confirm='CONFIRM' parameter.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -263,9 +445,18 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "description": "Show what would be done without making changes (default: false)",
                         "default": False
+                    },
+                    "confirm": {
+                        "type": "string",
+                        "description": "Safety confirmation. Must be 'CONFIRM' to execute."
                     }
                 },
                 "required": ["solutionPath", "amsNetId"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": False
             }
         ),
         Tool(
@@ -284,6 +475,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -316,6 +512,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -339,6 +540,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -361,6 +567,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         # Phase 4: ADS Communication Tools
@@ -381,6 +592,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["amsNetId"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -404,6 +620,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["amsNetId", "state"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -427,6 +648,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["amsNetId", "symbol"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -454,6 +680,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["amsNetId", "symbol", "value"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": True
             }
         ),
         # Phase 4: Task Management Tools
@@ -473,6 +704,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -503,6 +739,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath", "taskName"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         ),
         Tool(
@@ -529,6 +770,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
             }
         )
     ]
@@ -537,6 +783,41 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle tool calls."""
+    
+    # Handle arm/disarm tool
+    if name == "twincat_arm_dangerous_operations":
+        disarm = arguments.get("disarm", False)
+        reason = arguments.get("reason", "No reason provided")
+        
+        if disarm:
+            result = disarm_dangerous_operations()
+            output = "🔒 Dangerous operations DISARMED\n\nThe server is now in SAFE mode."
+        else:
+            result = arm_dangerous_operations(reason)
+            output = (
+                f"⚠️ Dangerous operations ARMED\n\n"
+                f"🕐 TTL: {result['ttl_seconds']} seconds\n"
+                f"📝 Reason: {result['reason']}\n\n"
+                f"The following tools are now available:\n"
+                f"  • twincat_activate\n"
+                f"  • twincat_restart\n"
+                f"  • twincat_deploy\n"
+                f"  • twincat_set_state\n"
+                f"  • twincat_write_var\n\n"
+                f"⏰ Armed mode will automatically expire in {result['ttl_seconds']} seconds."
+            )
+        
+        return [TextContent(type="text", text=output)]
+    
+    # Check armed state for dangerous tools
+    allowed, message = check_armed_for_tool(name)
+    if not allowed:
+        return [TextContent(type="text", text=message)]
+    
+    # Check confirmation for highly destructive tools
+    confirmed, conf_message = check_confirmation(name, arguments)
+    if not confirmed:
+        return [TextContent(type="text", text=conf_message)]
     
     if name == "twincat_build":
         solution_path = arguments.get("solutionPath", "")
