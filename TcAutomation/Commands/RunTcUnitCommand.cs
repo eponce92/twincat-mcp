@@ -215,12 +215,12 @@ namespace TcAutomation.Commands
                 Progress("target", $"Setting target to {amsNetId}...");
                 sysManager.SetTargetNetId(amsNetId);
 
-                // Disable I/O if requested
+                // Disable I/O if requested - use the improved method from AutomationInterface
                 if (disableIo)
                 {
                     Progress("io", "Disabling I/O devices...");
-                    DisableAllIoDevices(sysManager);
-                    Progress("io", "I/O devices disabled");
+                    var automationInterface = new AutomationInterface(vsInstance.GetProject());
+                    automationInterface.DisableAllIoDevices(true);
                 }
 
                 // Clean error list before activation
@@ -313,14 +313,18 @@ namespace TcAutomation.Commands
                         var item = errorItems.Item(i);
                         string desc = item.Description ?? "";
 
-                        // Collect all TcUnit messages
-                        if (desc.Contains("|") && (desc.Contains("Test") || desc.Contains("test")))
-                        {
-                            if (!result.TestMessages.Contains(desc))
-                                result.TestMessages.Add(desc);
-                        }
+                        // Only process messages from the TcUnit task (filter out license server, etc.)
+                        if (!IsTcUnitAdsMessage(desc, taskName))
+                            continue;
 
-                        // Parse summary markers
+                        // Extract just the TcUnit message part
+                        string tcUnitMsg = ExtractTcUnitMessage(desc, taskName);
+
+                        // Collect TcUnit messages
+                        if (!result.TestMessages.Contains(tcUnitMsg))
+                            result.TestMessages.Add(tcUnitMsg);
+
+                        // Parse summary markers (check original desc for markers)
                         if (desc.Contains(MARKER_TEST_SUITES))
                         {
                             testSuites = ExtractNumber(desc, MARKER_TEST_SUITES);
@@ -513,29 +517,6 @@ namespace TcAutomation.Commands
             return null;
         }
 
-        private static void DisableAllIoDevices(ITcSysManager10 sysManager)
-        {
-            try
-            {
-                ITcSmTreeItem ioConfig = sysManager.LookupTreeItem("TIID");
-                for (int i = 1; i <= ioConfig.ChildCount; i++)
-                {
-                    ITcSmTreeItem device = ioConfig.Child[i];
-                    string xml = device.ProduceXml();
-                    
-                    var doc = new XmlDocument();
-                    doc.LoadXml(xml);
-                    var disabledNode = doc.SelectSingleNode("//Disabled");
-                    if (disabledNode != null)
-                    {
-                        disabledNode.InnerText = "true";
-                        device.ConsumeXml(doc.OuterXml);
-                    }
-                }
-            }
-            catch { }
-        }
-
         private static int ExtractNumber(string text, string marker)
         {
             try
@@ -566,6 +547,86 @@ namespace TcAutomation.Commands
             }
             catch { }
             return 0;
+        }
+
+        /// <summary>
+        /// Returns whether the message is a message that originated from TcUnit.
+        /// Filters by task name to avoid picking up unrelated ADS messages.
+        /// 
+        /// For example, this would return false:
+        /// Message 20 2020-04-09 07:36:00 901 ms | 'License Server' (30): license validation status is Valid(3)
+        /// 
+        /// While this would return true:
+        /// Message 29 2020-04-09 07:36:01 464 ms | 'UnitTestTask' (351): | Test suite ID=0 'PRG_TEST.Test'
+        /// </summary>
+        private static bool IsTcUnitAdsMessage(string message, string taskName)
+        {
+            if (string.IsNullOrEmpty(taskName))
+            {
+                // Fallback: if no task name, check for TcUnit-specific markers
+                return message.Contains("|") && 
+                       (message.Contains("Test suite ID=") ||
+                        message.Contains("Test name=") ||
+                        message.Contains("Test status=") ||
+                        message.Contains("Test class name=") ||
+                        message.Contains(MARKER_TEST_SUITES) ||
+                        message.Contains(MARKER_TESTS) ||
+                        message.Contains(MARKER_SUCCESSFUL) ||
+                        message.Contains(MARKER_FAILED) ||
+                        message.Contains(MARKER_DURATION) ||
+                        message.Contains(MARKER_EXPORTED));
+            }
+
+            // Look for task name in format 'TaskName'
+            string taskMarker = "'" + taskName + "'";
+            int idx = message.IndexOf(taskMarker);
+            if (idx < 0)
+                return false;
+
+            // Look for the | character after the task name (TcUnit messages have this)
+            string remainingString = message.Substring(idx + taskMarker.Length);
+            return remainingString.Contains("|");
+        }
+
+        /// <summary>
+        /// Removes everything from the error-log other than the ADS message from TcUnit.
+        /// Converts messages like:
+        /// Message 53 2020-04-09 07:36:01 864 ms | 'UnitTestTask' (351): | Test class name=PRG_TEST.Test
+        /// to:
+        /// Test class name=PRG_TEST.Test
+        /// </summary>
+        private static string ExtractTcUnitMessage(string message, string taskName)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(taskName))
+                {
+                    // Fallback: find the last | and return everything after
+                    int lastPipe = message.LastIndexOf("| ");
+                    if (lastPipe >= 0)
+                        return message.Substring(lastPipe + 2).Trim();
+                    return message;
+                }
+
+                string taskMarker = "'" + taskName + "'";
+                int idx = message.IndexOf(taskMarker);
+                if (idx < 0)
+                    return message;
+
+                // Get everything after the task name
+                string remaining = message.Substring(idx + taskMarker.Length);
+
+                // Find the | character and get everything after it
+                int pipeIdx = remaining.IndexOf("|");
+                if (pipeIdx >= 0)
+                    return remaining.Substring(pipeIdx + 1).Trim();
+
+                return remaining.Trim();
+            }
+            catch
+            {
+                return message;
+            }
         }
     }
 }
