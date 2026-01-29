@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Xml.Linq;
 using TCatSysManagerLib;
 
@@ -70,6 +71,66 @@ namespace TcAutomation.Core
         public void ActivateConfiguration()
         {
             _sysManager.ActivateConfiguration();
+        }
+
+        /// <summary>
+        /// Sets the DontCheckTarget attribute in the project's System Settings.
+        /// This prevents the confirmation dialog when activating to a different target
+        /// than the one stored in the project. Essential for automated CI/CD workflows.
+        /// 
+        /// The DontCheckTarget attribute is stored in the System/Settings XML element
+        /// and tells TwinCAT to skip the "Target mismatch" confirmation dialog.
+        /// </summary>
+        /// <param name="targetNetId">The target AMS Net ID to allow without confirmation</param>
+        public void SetDontCheckTarget(string targetNetId)
+        {
+            try
+            {
+                // Get the Real-Time Configuration tree item
+                ITcSmTreeItem rtItem = _sysManager.LookupTreeItem(REAL_TIME_CONFIGURATION_SETTINGS);
+                
+                // Get the XML representation
+                var xml = rtItem.ProduceXml();
+                var doc = XDocument.Parse(xml);
+                
+                // Find the Settings element
+                var settingsElement = doc.Descendants("Settings").FirstOrDefault();
+                
+                if (settingsElement == null)
+                {
+                    // Create Settings element if it doesn't exist
+                    var rootElement = doc.Root;
+                    if (rootElement != null)
+                    {
+                        settingsElement = new XElement("Settings");
+                        rootElement.Add(settingsElement);
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine("[PROGRESS] config: Could not find root element in RT config XML");
+                        return;
+                    }
+                }
+                
+                // Add or update the DontCheckTarget attribute
+                var dontCheckAttr = settingsElement.Attribute("DontCheckTarget");
+                if (dontCheckAttr != null)
+                {
+                    dontCheckAttr.Value = targetNetId;
+                }
+                else
+                {
+                    settingsElement.Add(new XAttribute("DontCheckTarget", targetNetId));
+                }
+                
+                // Apply the modified XML
+                rtItem.ConsumeXml(doc.ToString());
+                Console.Error.WriteLine($"[PROGRESS] config: Set DontCheckTarget to '{targetNetId}'");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[PROGRESS] config: Could not set DontCheckTarget: {ex.Message}");
+            }
         }
 
         /// <summary>

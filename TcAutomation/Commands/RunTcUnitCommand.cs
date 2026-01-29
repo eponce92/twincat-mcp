@@ -179,12 +179,15 @@ namespace TcAutomation.Commands
                     {
                         var singleTask = realTimeConfig.Child[1];
                         taskName = GetTaskName(singleTask);
-                        ConfigureTask(realTimeConfig, taskName, false);
+                        ConfigureTask(realTimeConfig, taskName, true);  // Still disable others for consistency
                         Progress("config", $"Auto-detected task '{taskName}'");
                     }
                     else
                     {
-                        Progress("config", $"Multiple tasks found ({realTimeConfig.ChildCount}), using default configuration");
+                        // Multiple tasks but no task specified - this is an error for unit testing
+                        result.Success = false;
+                        result.ErrorMessage = $"Multiple tasks found ({realTimeConfig.ChildCount}). Please specify which task runs TcUnit tests using --task parameter";
+                        return result;
                     }
                 }
 
@@ -206,7 +209,9 @@ namespace TcAutomation.Commands
 
                     // Get AMS port from project
                     string xml = plcProject.ProduceXml();
-                    amsPort = ExtractAmsPort(xml) ?? 851;
+                    var extractedPort = ExtractAmsPort(xml);
+                    Console.Error.WriteLine($"[DEBUG] ExtractAmsPort for '{plcProjectName}': {extractedPort?.ToString() ?? "null"}");
+                    amsPort = extractedPort ?? 851;
                     
                     Progress("config", $"Boot project configured for '{plcProjectName}' (port {amsPort})");
                 }
@@ -215,24 +220,37 @@ namespace TcAutomation.Commands
                 Progress("target", $"Setting target to {amsNetId}...");
                 sysManager.SetTargetNetId(amsNetId);
 
+                // Create AutomationInterface for additional configuration
+                var automationInterface = new AutomationInterface(vsInstance.GetProject());
+
+                // Set DontCheckTarget to suppress activation confirmation dialog
+                // This is necessary because SilentMode doesn't suppress this specific dialog
+                Progress("config", "Setting DontCheckTarget to suppress activation dialog...");
+                automationInterface.SetDontCheckTarget(amsNetId);
+
+                // Configure CPU cores for isolated real-time to avoid vmx86.sys dialog
+                Progress("config", "Configuring CPU cores for real-time...");
+                automationInterface.AssignCPUCores();
+
                 // Disable I/O if requested - use the improved method from AutomationInterface
                 if (disableIo)
                 {
                     Progress("io", "Disabling I/O devices...");
-                    var automationInterface = new AutomationInterface(vsInstance.GetProject());
                     automationInterface.DisableAllIoDevices(true);
                 }
-
-                // Clean error list before activation
-                Progress("activate", "Preparing for activation...");
-                vsInstance.CleanSolution();
-                Thread.Sleep(2000);
 
                 // Activate configuration
                 Progress("activate", "Activating configuration on target...");
                 sysManager.ActivateConfiguration();
-                Thread.Sleep(5000);
+                Thread.Sleep(10000);
                 Progress("activate", "Configuration activated");
+
+                // Clean the solution AFTER activation to clear Error List of build messages
+                // This is critical - TcUnit messages won't appear if Error List has build clutter
+                // This must happen BETWEEN activation and restart (TcUnit-Runner does this)
+                Progress("activate", "Clearing Error List for TcUnit messages...");
+                vsInstance.CleanSolution();
+                Thread.Sleep(10000);
 
                 // Restart TwinCAT
                 Progress("restart", "Restarting TwinCAT runtime...");
@@ -251,7 +269,10 @@ namespace TcAutomation.Commands
                 {
                     try
                     {
-                        adsClient.Connect(amsNetId, amsPort);
+                        if (!adsClient.IsConnected)
+                        {
+                            adsClient.Connect(amsNetId, amsPort);
+                        }
                         var state = adsClient.ReadState();
                         if (state.AdsState == AdsState.Run)
                         {
@@ -259,7 +280,6 @@ namespace TcAutomation.Commands
                             Progress("wait", "PLC is now in Run state");
                             break;
                         }
-                        adsClient.Disconnect();
                         
                         waitAttempts++;
                         if (waitAttempts % 5 == 0)
@@ -267,7 +287,16 @@ namespace TcAutomation.Commands
                             Progress("wait", $"Still waiting for Run state (current: {state.AdsState})...");
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        waitAttempts++;
+                        if (waitAttempts % 5 == 0)
+                        {
+                            Progress("wait", $"ADS connection attempt failed: {ex.Message}");
+                        }
+                        // Disconnect and retry
+                        try { adsClient.Disconnect(); } catch { }
+                    }
                     Thread.Sleep(2000);
                 }
 
@@ -285,6 +314,10 @@ namespace TcAutomation.Commands
                 double duration = 0;
                 bool resultsExported = false;
                 int pollCount = 0;
+                
+                // Track current test context for better failure reporting
+                string currentTestSuite = "";
+                string currentTestName = "";
 
                 while (DateTime.Now < timeout)
                 {
@@ -308,6 +341,41 @@ namespace TcAutomation.Commands
                     // Read error list
                     var errorItems = vsInstance.GetErrorItems();
                     
+                    // First pass: Check ALL messages for summary markers (like TcUnit-Runner does)
+                    // Summary messages may not have the task name format, so check before filtering
+                    for (int i = 1; i <= errorItems.Count; i++)
+                    {
+                        var item = errorItems.Item(i);
+                        string desc = item.Description ?? "";
+
+                        // Parse summary markers from ANY message (not filtered by task)
+                        if (desc.Contains(MARKER_TEST_SUITES))
+                        {
+                            testSuites = ExtractNumber(desc, MARKER_TEST_SUITES);
+                        }
+                        if (desc.Contains(MARKER_TESTS))
+                        {
+                            tests = ExtractNumber(desc, MARKER_TESTS);
+                        }
+                        if (desc.Contains(MARKER_SUCCESSFUL))
+                        {
+                            passed = ExtractNumber(desc, MARKER_SUCCESSFUL);
+                        }
+                        if (desc.Contains(MARKER_FAILED))
+                        {
+                            failed = ExtractNumber(desc, MARKER_FAILED);
+                        }
+                        if (desc.Contains(MARKER_DURATION))
+                        {
+                            duration = ExtractDouble(desc, MARKER_DURATION);
+                        }
+                        if (desc.Contains(MARKER_EXPORTED))
+                        {
+                            resultsExported = true;
+                        }
+                    }
+                    
+                    // Second pass: Process TcUnit task messages for detailed results
                     for (int i = 1; i <= errorItems.Count; i++)
                     {
                         var item = errorItems.Item(i);
@@ -320,42 +388,59 @@ namespace TcAutomation.Commands
                         // Extract just the TcUnit message part
                         string tcUnitMsg = ExtractTcUnitMessage(desc, taskName);
 
-                        // Collect TcUnit messages
+                        // Collect TcUnit messages (for debugging if needed)
                         if (!result.TestMessages.Contains(tcUnitMsg))
                             result.TestMessages.Add(tcUnitMsg);
 
-                        // Parse summary markers (check original desc for markers)
-                        if (desc.Contains(MARKER_TEST_SUITES))
+                        // Track test suite name: "Test suite ID=0 'PRG_TEST.TestSuite'"
+                        if (tcUnitMsg.Contains("Test suite ID="))
                         {
-                            testSuites = ExtractNumber(desc, MARKER_TEST_SUITES);
+                            int quoteStart = tcUnitMsg.IndexOf("'");
+                            int quoteEnd = tcUnitMsg.LastIndexOf("'");
+                            if (quoteStart >= 0 && quoteEnd > quoteStart)
+                            {
+                                currentTestSuite = tcUnitMsg.Substring(quoteStart + 1, quoteEnd - quoteStart - 1);
+                            }
                         }
-                        else if (desc.Contains(MARKER_TESTS))
+                        // Track test name: "Test name=TestMethod"
+                        else if (tcUnitMsg.Contains("Test name="))
                         {
-                            tests = ExtractNumber(desc, MARKER_TESTS);
-                        }
-                        else if (desc.Contains(MARKER_SUCCESSFUL))
-                        {
-                            passed = ExtractNumber(desc, MARKER_SUCCESSFUL);
-                        }
-                        else if (desc.Contains(MARKER_FAILED))
-                        {
-                            failed = ExtractNumber(desc, MARKER_FAILED);
-                        }
-                        else if (desc.Contains(MARKER_DURATION))
-                        {
-                            duration = ExtractDouble(desc, MARKER_DURATION);
-                        }
-                        else if (desc.Contains(MARKER_EXPORTED))
-                        {
-                            resultsExported = true;
+                            int eqIdx = tcUnitMsg.IndexOf("Test name=");
+                            if (eqIdx >= 0)
+                            {
+                                currentTestName = tcUnitMsg.Substring(eqIdx + 10).Trim();
+                            }
                         }
 
-                        // Capture actual failed test details (status=FAIL, not summary lines)
-                        if (desc.Contains("status=FAIL") || 
-                            (desc.Contains("FAILED") && !desc.Contains("Failed tests:") && !desc.Contains("failed tests=")))
+                        // Capture failed test with full context (suite.test: details)
+                        // TcUnit format: FAILED TEST 'Suite@TestName', EXP: expected, ACT: actual, MSG: message
+                        if (tcUnitMsg.Contains("FAILED TEST"))
                         {
-                            if (!result.FailedTestDetails.Contains(desc))
-                                result.FailedTestDetails.Add(desc);
+                            // Extract the failure details directly from the message
+                            // Format: FAILED TEST 'MAIN.fbTests@TestMethod', EXP: value, ACT: value, MSG: message
+                            string failDetail = tcUnitMsg;
+                            
+                            // Clean up - remove "FAILED TEST " prefix for cleaner output
+                            if (failDetail.StartsWith("FAILED TEST "))
+                            {
+                                failDetail = failDetail.Substring(12).Trim();
+                                // Remove surrounding quotes if present
+                                if (failDetail.StartsWith("'"))
+                                {
+                                    int endQuote = failDetail.IndexOf("'", 1);
+                                    if (endQuote > 0)
+                                    {
+                                        string testName = failDetail.Substring(1, endQuote - 1);
+                                        string remainder = failDetail.Substring(endQuote + 1).TrimStart(',', ' ');
+                                        // Replace @ with . for readability
+                                        testName = testName.Replace("@", ".");
+                                        failDetail = $"{testName}: {remainder}";
+                                    }
+                                }
+                            }
+                            
+                            if (!result.FailedTestDetails.Contains(failDetail))
+                                result.FailedTestDetails.Add(failDetail);
                         }
                     }
 
@@ -443,17 +528,25 @@ namespace TcAutomation.Commands
                 
                 if (isTargetTask)
                 {
-                    // Enable and autostart the test task
-                    xml = SetTaskDisabledAndAutostart(xml, false, true);
+                    // Enable the test task using native API
+                    task.Disabled = DISABLED_STATE.SMDS_NOT_DISABLED;
+                    
+                    // Set AutoStart via XML (no native API available)
+                    xml = SetAutoStartInXml(xml, true);
+                    task.ConsumeXml(xml);
                 }
                 else if (disableOthers)
                 {
-                    // Disable other tasks
-                    xml = SetTaskDisabledAndAutostart(xml, true, false);
+                    // Disable other tasks using native API
+                    task.Disabled = DISABLED_STATE.SMDS_DISABLED;
+                    
+                    // Set AutoStart=false via XML
+                    xml = SetAutoStartInXml(xml, false);
+                    task.ConsumeXml(xml);
                 }
 
-                task.ConsumeXml(xml);
-                Thread.Sleep(500);
+                // Same 3 second delay as TcUnit-Runner after each task update
+                Thread.Sleep(3000);
             }
         }
 
@@ -469,7 +562,8 @@ namespace TcAutomation.Commands
             {
                 var doc = new XmlDocument();
                 doc.LoadXml(xml);
-                var nameNode = doc.SelectSingleNode("//Name");
+                // Use same XPath as TcUnit-Runner: /TreeItem/ItemName
+                var nameNode = doc.SelectSingleNode("/TreeItem/ItemName");
                 return nameNode?.InnerText ?? "";
             }
             catch
@@ -478,20 +572,15 @@ namespace TcAutomation.Commands
             }
         }
 
-        private static string SetTaskDisabledAndAutostart(string xml, bool disabled, bool autostart)
+        private static string SetAutoStartInXml(string xml, bool autostart)
         {
             try
             {
                 var doc = new XmlDocument();
                 doc.LoadXml(xml);
 
-                // Find or create Disabled node
-                var disabledNode = doc.SelectSingleNode("//Disabled");
-                if (disabledNode != null)
-                    disabledNode.InnerText = disabled.ToString().ToLower();
-
-                // Find or create AutoStart node
-                var autostartNode = doc.SelectSingleNode("//AutoStart");
+                // Use same XPath as TcUnit-Runner: /TreeItem/TaskDef/AutoStart
+                var autostartNode = doc.SelectSingleNode("/TreeItem/TaskDef/AutoStart");
                 if (autostartNode != null)
                     autostartNode.InnerText = autostart.ToString().ToLower();
 
@@ -509,7 +598,10 @@ namespace TcAutomation.Commands
             {
                 var doc = new XmlDocument();
                 doc.LoadXml(xml);
-                var portNode = doc.SelectSingleNode("//AmsPort");
+                
+                // TwinCAT uses AdsPort (not AmsPort) in the PlcProjectDef element
+                // Path: /TreeItem/PlcProjectDef/AdsPort
+                var portNode = doc.SelectSingleNode("/TreeItem/PlcProjectDef/AdsPort");
                 if (portNode != null && int.TryParse(portNode.InnerText, out int port))
                     return port;
             }

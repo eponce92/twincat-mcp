@@ -214,8 +214,12 @@ namespace TcAutomation.Core
             {
                 var settings = (ITcAutomationSettings)_dte.GetObject("TcAutomationSettings");
                 settings.SilentMode = true;
+                Console.Error.WriteLine("[DEBUG] TcAutomationSettings.SilentMode set to true");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[DEBUG] Failed to set SilentMode: {ex.Message}");
+            }
         }
 
         private void LoadTwinCATVersion()

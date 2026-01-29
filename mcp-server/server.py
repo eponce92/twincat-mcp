@@ -1911,21 +1911,21 @@ PLC Count: {result.get('PlcCount', 0)}
             if duration:
                 output += f"  • Duration: {duration:.1f}s\n"
             
-            # Show failed test details if any
+            # Show failed test details only (not passed tests)
             failed_details = result.get("failedTestDetails", [])
             if failed_details:
-                output += f"\n🔴 Failed Tests:\n"
+                output += f"\n🔴 Failed Tests ({len(failed_details)}):\n"
                 for detail in failed_details:
+                    # Clean up the detail message for readability
                     output += f"  • {detail}\n"
+            elif failed > 0:
+                # We know there are failures but didn't capture details
+                output += f"\n🔴 {failed} test(s) failed - check TcUnit output for details\n"
             
-            # Show test messages (TcUnit output)
+            # Only show summary line count, not all messages
             test_messages = result.get("testMessages", [])
-            if test_messages:
-                output += f"\n💬 TcUnit Output:\n"
-                for msg in test_messages[-20:]:  # Last 20 messages
-                    output += f"  {msg}\n"
-                if len(test_messages) > 20:
-                    output += f"  ... and {len(test_messages) - 20} more messages\n"
+            if test_messages and failed == 0:
+                output += f"\n✅ All {total_tests} tests passed (detailed log available with {len(test_messages)} messages)\n"
         else:
             error_msg = result.get("errorMessage", "Unknown error")
             output += f"{'='*40}\n"

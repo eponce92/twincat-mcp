@@ -8,7 +8,9 @@ namespace TcAutomation.Commands
 {
     /// <summary>
     /// Configures a real-time task (enable/disable, autostart).
-    /// Based on TcUnit-Runner's task configuration logic.
+    /// Uses native TwinCAT Automation Interface API where possible:
+    /// - ITcSmTreeItem.Disabled for enable/disable (native API)
+    /// - XML for AutoStart (no native API available)
     /// </summary>
     public static class ConfigureTaskCommand
     {
@@ -83,11 +85,12 @@ namespace TcAutomation.Commands
                     return 1;
                 }
 
-                // Read current XML
+                // Read current XML for AutoStart (no native property available)
                 string currentXml = targetTask.ProduceXml();
                 
-                // Get previous state
-                ParseTaskState(currentXml, out bool wasDisabled, out bool wasAutoStart);
+                // Get previous state - Disabled from native property, AutoStart from XML
+                bool wasDisabled = (targetTask.Disabled != DISABLED_STATE.SMDS_NOT_DISABLED);
+                bool wasAutoStart = GetAutoStartFromXml(currentXml);
                 result.PreviousDisabled = wasDisabled;
                 result.PreviousAutoStart = wasAutoStart;
 
@@ -95,17 +98,18 @@ namespace TcAutomation.Commands
                 bool newDisabled = enable.HasValue ? !enable.Value : wasDisabled;
                 bool newAutoStart = autoStart.HasValue ? autoStart.Value : wasAutoStart;
 
-                string newXml = SetDisabledAndAutoStart(currentXml, newDisabled, newAutoStart);
+                // Use native API for Disabled property
+                targetTask.Disabled = newDisabled ? DISABLED_STATE.SMDS_DISABLED : DISABLED_STATE.SMDS_NOT_DISABLED;
                 
-                if (string.IsNullOrEmpty(newXml))
+                // Use XML only for AutoStart (no native API)
+                if (newAutoStart != wasAutoStart)
                 {
-                    result.ErrorMessage = "Failed to modify task XML";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
+                    string newXml = SetAutoStartInXml(currentXml, newAutoStart);
+                    if (!string.IsNullOrEmpty(newXml))
+                    {
+                        targetTask.ConsumeXml(newXml);
+                    }
                 }
-
-                // Apply the changes
-                targetTask.ConsumeXml(newXml);
                 
                 // Wait a moment for changes to take effect
                 System.Threading.Thread.Sleep(1000);
@@ -138,53 +142,32 @@ namespace TcAutomation.Commands
             return itemNameNode?.InnerText ?? "";
         }
 
-        private static void ParseTaskState(string xml, out bool disabled, out bool autoStart)
+        private static bool GetAutoStartFromXml(string xml)
         {
-            disabled = false;
-            autoStart = false;
-
             var xmlDoc = new XmlDocument();
             xmlDoc.LoadXml(xml);
-
-            var disabledNode = xmlDoc.SelectSingleNode("/TreeItem/Disabled");
-            if (disabledNode != null)
-            {
-                disabled = disabledNode.InnerText.Equals("true", StringComparison.OrdinalIgnoreCase);
-            }
 
             var autoStartNode = xmlDoc.SelectSingleNode("/TreeItem/TaskDef/AutoStart");
             if (autoStartNode != null)
             {
-                autoStart = autoStartNode.InnerText.Equals("true", StringComparison.OrdinalIgnoreCase);
+                return autoStartNode.InnerText.Equals("true", StringComparison.OrdinalIgnoreCase);
             }
+            return false;
         }
 
-        private static string SetDisabledAndAutoStart(string xml, bool disabled, bool autoStart)
+        private static string SetAutoStartInXml(string xml, bool autoStart)
         {
             var xmlDoc = new XmlDocument();
             xmlDoc.LoadXml(xml);
-
-            var disabledNode = xmlDoc.SelectSingleNode("/TreeItem/Disabled");
-            if (disabledNode != null)
-            {
-                disabledNode.InnerText = disabled.ToString().ToLower();
-            }
-            else
-            {
-                return "";
-            }
 
             var autoStartNode = xmlDoc.SelectSingleNode("/TreeItem/TaskDef/AutoStart");
             if (autoStartNode != null)
             {
                 autoStartNode.InnerText = autoStart.ToString().ToLower();
-            }
-            else
-            {
-                return "";
+                return xmlDoc.OuterXml;
             }
 
-            return xmlDoc.OuterXml;
+            return "";
         }
     }
 
